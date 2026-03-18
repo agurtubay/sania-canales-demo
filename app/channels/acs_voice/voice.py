@@ -14,6 +14,7 @@ from ...core.agent import run_agent
 from ...core.types import InternalMessage
 
 _client = None
+_SILENCE_TIMEOUT = 2
 _call_callers: dict[str, str] = {}  # call_connection_id → caller phone number
 
 
@@ -187,39 +188,45 @@ async def handle_voice_callbacks(req: Request):
 
         call_conn = client.get_call_connection(call_connection_id)
 
-        # ── CallConnected: play greeting ──
+        # ── CallConnected: play greeting + start listening (bundled) ──
         if event_type == "Microsoft.Communication.CallConnected":
             greeting = TextSource(
                 text="Hola, soy SanIA. ¿En qué puedo ayudarte hoy?",
                 source_locale="es-ES",
                 voice_name="es-ES-ElviraNeural",
             )
-
+            caller_phone = _call_callers.get(call_connection_id, "")
             _voice_log(
-                "play_media_attempt",
+                "welcome_recognize_attempt",
                 index=index,
                 call_connection_id=call_connection_id,
-                source_locale="es-ES",
-                voice_name="es-ES-ElviraNeural",
+                caller_phone=caller_phone,
             )
+            if caller_phone:
+                target = PhoneNumberIdentifier(caller_phone)
+                try:
+                    call_conn.start_recognizing_media(
+                        input_type=RecognizeInputType.SPEECH,
+                        target_participant=target,
+                        play_prompt=greeting,
+                        speech_language="es-ES",
+                        end_silence_timeout=_SILENCE_TIMEOUT,
+                    )
+                    _voice_log("welcome_recognize_started", index=index, call_connection_id=call_connection_id)
+                except HttpResponseError as exc:
+                    _voice_log(
+                        "welcome_recognize_error",
+                        index=index,
+                        status_code=exc.status_code,
+                        message=str(exc),
+                    )
+            else:
+                _voice_log("welcome_no_caller_phone", index=index, call_connection_id=call_connection_id)
 
-            try:
-                call_conn.play_media_to_all(
-                    greeting,
-                    operation_context="welcome-message",
-                )
-                _voice_log("play_media_success", index=index, call_connection_id=call_connection_id)
-            except HttpResponseError as exc:
-                _voice_log(
-                    "play_media_error",
-                    index=index,
-                    status_code=exc.status_code,
-                    message=str(exc),
-                )
-
-        # ── PlayCompleted: start listening ──
+        # ── PlayCompleted: no-op (recognition is bundled with play) ──
         elif event_type == "Microsoft.Communication.PlayCompleted":
-            _start_speech_recognition(call_conn, call_connection_id, index)
+            _voice_log("play_completed", index=index, call_connection_id=call_connection_id,
+                        operation_context=data.get("operationContext"))
 
         # ── RecognizeCompleted: send speech to agent, play response ──
         elif event_type == "Microsoft.Communication.RecognizeCompleted":
@@ -259,16 +266,28 @@ async def handle_voice_callbacks(req: Request):
 
             # 8510 = silence timeout — ask the user if they're still there
             if sub_code == 8510:
-                try:
-                    prompt = TextSource(
-                        text="¿Sigues ahí? Si necesitas algo más, no dudes en preguntarme.",
-                        source_locale="es-ES",
-                        voice_name="es-ES-ElviraNeural",
-                    )
-                    call_conn.play_media_to_all(prompt, operation_context="silence-prompt")
-                    _voice_log("silence_prompt_sent", index=index, call_connection_id=call_connection_id)
-                except HttpResponseError as exc:
-                    _voice_log("silence_prompt_error", index=index, message=str(exc))
+                caller_phone = _call_callers.get(call_connection_id, "")
+                if caller_phone:
+                    try:
+                        prompt = TextSource(
+                            text="¿Sigues ahí? Si necesitas algo más, no dudes en preguntarme.",
+                            source_locale="es-ES",
+                            voice_name="es-ES-ElviraNeural",
+                        )
+                        target = PhoneNumberIdentifier(caller_phone)
+                        call_conn.start_recognizing_media(
+                            input_type=RecognizeInputType.SPEECH,
+                            target_participant=target,
+                            play_prompt=prompt,
+                            speech_language="es-ES",
+                            end_silence_timeout=_SILENCE_TIMEOUT,
+                            operation_context="silence-prompt-listen",
+                        )
+                        _voice_log("silence_prompt_recognize_started", index=index, call_connection_id=call_connection_id)
+                    except HttpResponseError as exc:
+                        _voice_log("silence_prompt_error", index=index, message=str(exc))
+                else:
+                    _voice_log("silence_prompt_no_caller", index=index, call_connection_id=call_connection_id)
             else:
                 # Other failure — try listening again
                 _start_speech_recognition(call_conn, call_connection_id, index)
@@ -298,8 +317,7 @@ def _start_speech_recognition(call_conn, call_connection_id: str, index: int):
             input_type=RecognizeInputType.SPEECH,
             target_participant=target,
             speech_language="es-ES",
-            end_silence_timeout=3,
-            operation_context="listen-user",
+            end_silence_timeout=_SILENCE_TIMEOUT,
         )
         _voice_log("recognize_started", index=index, call_connection_id=call_connection_id)
     except HttpResponseError as exc:
@@ -335,19 +353,29 @@ async def _handle_user_speech(call_conn, call_connection_id: str, text: str, ind
             "agent_response",
             index=index,
             call_connection_id=call_connection_id,
-            response_text=agent_text[:200],
+            response_text=agent_text[:500],
+            response_len=len(agent_text),
         )
 
-        response_source = TextSource(
-            text=agent_text,
-            source_locale="es-ES",
-            voice_name="es-ES-ElviraNeural",
-        )
-        call_conn.play_media_to_all(
-            response_source,
-            operation_context="agent-response",
-        )
-        _voice_log("agent_play_started", index=index, call_connection_id=call_connection_id)
+        caller_phone = _call_callers.get(call_connection_id, "")
+        if caller_phone:
+            response_source = TextSource(
+                text=agent_text,
+                source_locale="es-ES",
+                voice_name="es-ES-ElviraNeural",
+            )
+            target = PhoneNumberIdentifier(caller_phone)
+            call_conn.start_recognizing_media(
+                input_type=RecognizeInputType.SPEECH,
+                target_participant=target,
+                play_prompt=response_source,
+                speech_language="es-ES",
+                end_silence_timeout=_SILENCE_TIMEOUT,
+                operation_context="agent-response-listen",
+            )
+            _voice_log("agent_response_recognize_started", index=index, call_connection_id=call_connection_id)
+        else:
+            _voice_log("agent_response_no_caller", index=index, call_connection_id=call_connection_id)
 
     except Exception as exc:
         _voice_log(

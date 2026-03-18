@@ -18,7 +18,7 @@ def _app_log(event: str, **fields):
     }
     print("APP_TRACE=" + json.dumps(payload, ensure_ascii=False, default=str))
 
-print("VOICE_BUILD=2026-03-16-01")
+print("VOICE_BUILD=2026-03-18-02")
 for r in app.routes:
     print("ROUTE", getattr(r, "path", None), getattr(r, "methods", None))
 
