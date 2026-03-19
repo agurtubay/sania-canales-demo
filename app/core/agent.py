@@ -2,10 +2,10 @@ import asyncio
 import os
 import re
 from typing import AsyncIterator
-from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
-from openai import Stream
+from azure.identity import DefaultAzureCredential, ManagedIdentityCredential, get_bearer_token_provider
+from openai import AzureOpenAI, Stream
 from .types import InternalMessage, InternalResponse
+from .memory import get_history, append_turn
 
 SYSTEM_PROMPT = """\
 Eres SanIA, un asistente virtual inteligente de Sanitas.
@@ -54,47 +54,75 @@ def _get_client():
 
     credential = (
         ManagedIdentityCredential()
-        if os.getenv("WEBSITE_SITE_NAME")
+        if os.getenv("CONTAINER_APP_NAME")
         else DefaultAzureCredential()
     )
 
-    project = AIProjectClient(
-        endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-        credential=credential,
+    token_provider = get_bearer_token_provider(
+        credential, "https://cognitiveservices.azure.com/.default"
     )
-    _client = project.get_openai_client()
+
+    _client = AzureOpenAI(
+        azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
+        azure_ad_token_provider=token_provider,
+    )
     return _client
 
-def _build_input(msg: InternalMessage):
+def _build_input(msg: InternalMessage, history: list[dict] | None = None):
     system_text = SYSTEM_PROMPT
     if msg.channel == "voice":
         system_text += VOICE_EXTRA_INSTRUCTIONS
-    return [
+
+    messages = [
         {
             "type": "message",
             "role": "system",
             "content": [{"type": "input_text", "text": system_text}],
         },
-        {
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": msg.text}],
-        },
     ]
+
+    # Add conversation history
+    for turn in (history or []):
+        messages.append({
+            "type": "message",
+            "role": turn["role"],
+            "content": [{"type": "input_text", "text": turn["content"]}],
+        })
+
+    # Current user message
+    messages.append({
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": msg.text}],
+    })
+
+    return messages
 
 
 async def run_agent(msg: InternalMessage) -> InternalResponse:
     client = _get_client()
 
+    # Load conversation history from Cosmos DB
+    history = await get_history(msg.conversationId)
+
     response = await asyncio.to_thread(
         client.responses.create,
         model=os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini"),
-        input=_build_input(msg),
+        input=_build_input(msg, history),
     )
 
     text = response.output_text
     if msg.channel == "voice":
         text = _strip_emojis(text)
+
+    # Save turn to Cosmos DB
+    await append_turn(
+        conversation_id=msg.conversationId,
+        user_text=msg.text,
+        assistant_text=text,
+        channel=msg.channel,
+    )
 
     return InternalResponse(
         correlationId=msg.correlationId,
