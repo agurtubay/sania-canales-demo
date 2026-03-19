@@ -64,7 +64,7 @@ def _get_client():
 
     _client = AzureOpenAI(
         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2025-03-01-preview"),
         azure_ad_token_provider=token_provider,
     )
     return _client
@@ -84,10 +84,11 @@ def _build_input(msg: InternalMessage, history: list[dict] | None = None):
 
     # Add conversation history
     for turn in (history or []):
+        content_type = "output_text" if turn["role"] == "assistant" else "input_text"
         messages.append({
             "type": "message",
             "role": turn["role"],
-            "content": [{"type": "input_text", "text": turn["content"]}],
+            "content": [{"type": content_type, "text": turn["content"]}],
         })
 
     # Current user message

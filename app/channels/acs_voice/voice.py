@@ -223,10 +223,13 @@ async def handle_voice_callbacks(req: Request):
             else:
                 _voice_log("welcome_no_caller_phone", index=index, call_connection_id=call_connection_id)
 
-        # ── PlayCompleted: no-op (recognition is bundled with play) ──
+        # ── PlayCompleted: restart recognition if this was an error-message or standalone play ──
         elif event_type == "Microsoft.Communication.PlayCompleted":
+            op_ctx = data.get("operationContext")
             _voice_log("play_completed", index=index, call_connection_id=call_connection_id,
-                        operation_context=data.get("operationContext"))
+                        operation_context=op_ctx)
+            if op_ctx == "error-message":
+                _start_speech_recognition(call_conn, call_connection_id, index)
 
         # ── RecognizeCompleted: send speech to agent, play response ──
         elif event_type == "Microsoft.Communication.RecognizeCompleted":

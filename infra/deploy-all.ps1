@@ -165,7 +165,7 @@ if ($aiDeleted -gt 0) {
 }
 az cognitiveservices account create --name $aiName `
     --resource-group $ResourceGroup --location $AILocation `
-    --kind AIServices --sku $AISku --output none --yes
+    --kind AIServices --sku $AISku --custom-domain $aiName --output none --yes
 Assert-Az "Create AI Services"
 $aiEndpoint = az cognitiveservices account show --name $aiName `
     --resource-group $ResourceGroup --query properties.endpoint -o tsv
@@ -193,7 +193,7 @@ if ($cogDeleted -gt 0) {
 }
 az cognitiveservices account create --name $cogName `
     --resource-group $ResourceGroup --location $SpeechLocation `
-    --kind CognitiveServices --sku S0 --output none --yes
+    --kind CognitiveServices --sku S0 --custom-domain $cogName --output none --yes
 Assert-Az "Create Cognitive Services (Speech)"
 $cogEndpoint = az cognitiveservices account show --name $cogName `
     --resource-group $ResourceGroup --query properties.endpoint -o tsv
@@ -228,7 +228,9 @@ Assert-Az "Create Cosmos container"
 $cosmosConn = az cosmosdb keys list --name $cosmosName `
     --resource-group $ResourceGroup --type connection-strings `
     --query "connectionStrings[0].connectionString" -o tsv
-Write-Ok "Cosmos DB ready."
+$cosmosEndpoint = az cosmosdb show --name $cosmosName `
+    --resource-group $ResourceGroup --query documentEndpoint -o tsv
+Write-Ok "Cosmos DB ready ($cosmosEndpoint)."
 
 # ══════════════════════════════════════════════════════════════════════
 # PHASE 7 — Store secrets in Key Vault
@@ -274,8 +276,9 @@ $envVars = @(
     "ACS_ACCESS_KEY=secretref:acs-key",
     "AZURE_OPENAI_ENDPOINT=$aiEndpoint",
     "AZURE_OPENAI_DEPLOYMENT=$AIModel",
-    "AZURE_OPENAI_API_VERSION=2024-12-01-preview",
+    "AZURE_OPENAI_API_VERSION=2025-03-01-preview",
     "COGNITIVE_SERVICES_ENDPOINT=$cogEndpoint",
+    "COSMOS_ENDPOINT=$cosmosEndpoint",
     "COSMOS_CONNECTION_STRING=secretref:cosmos-conn",
     "COSMOS_DATABASE=sania-bot",
     "COSMOS_CONTAINER=conversations",
@@ -322,7 +325,14 @@ Assert-Az "Assign CA MI -> KV Secrets User"
 az role assignment create --assignee $caPrincipal --role "Cognitive Services OpenAI User" --scope $aiId --output none
 Assert-Az "Assign CA MI -> Cognitive Services OpenAI User"
 
-Write-Ok "RBAC assigned (Key Vault + OpenAI)."
+# CA MI -> Cosmos DB Built-in Data Contributor (for AAD-based Cosmos access)
+$cosmosId = az cosmosdb show --name $cosmosName --resource-group $ResourceGroup --query id -o tsv
+az cosmosdb sql role assignment create --account-name $cosmosName --resource-group $ResourceGroup `
+    --role-definition-id "00000000-0000-0000-0000-000000000002" `
+    --principal-id $caPrincipal --scope $cosmosId --output none
+Assert-Az "Assign CA MI -> Cosmos DB Data Contributor"
+
+Write-Ok "RBAC assigned (Key Vault + OpenAI + Cosmos DB)."
 
 # Wait for RBAC propagation then switch secrets to Key Vault references
 Write-Step "Switching secrets to Key Vault references..."

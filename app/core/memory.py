@@ -7,6 +7,7 @@ from typing import Optional
 
 from azure.cosmos import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 
 _client: Optional[CosmosClient] = None
 _container = None
@@ -20,11 +21,24 @@ def _get_container():
     if _container is not None:
         return _container
 
-    conn_str = os.environ["COSMOS_CONNECTION_STRING"]
     db_name = os.getenv("COSMOS_DATABASE", "sania-bot")
     container_name = os.getenv("COSMOS_CONTAINER", "conversations")
 
-    _client = CosmosClient.from_connection_string(conn_str)
+    cosmos_endpoint = os.getenv("COSMOS_ENDPOINT", "")
+    conn_str = os.getenv("COSMOS_CONNECTION_STRING", "")
+
+    if cosmos_endpoint:
+        credential = (
+            ManagedIdentityCredential()
+            if os.getenv("CONTAINER_APP_NAME")
+            else DefaultAzureCredential()
+        )
+        _client = CosmosClient(cosmos_endpoint, credential=credential)
+    elif conn_str:
+        _client = CosmosClient.from_connection_string(conn_str)
+    else:
+        raise RuntimeError("Set COSMOS_ENDPOINT or COSMOS_CONNECTION_STRING")
+
     database = _client.get_database_client(db_name)
     _container = database.get_container_client(container_name)
     return _container
