@@ -9,9 +9,10 @@ _client = None
 def _get_client() -> NotificationMessagesClient:
     global _client
     if _client is None:
-        _client = NotificationMessagesClient.from_connection_string(
-            os.environ["COMMUNICATION_SERVICES_CONNECTION_STRING"]
-        )
+        endpoint = os.environ["ACS_ENDPOINT"]
+        access_key = os.environ["ACS_ACCESS_KEY"]
+        conn_str = f"endpoint={endpoint};accesskey={access_key}"
+        _client = NotificationMessagesClient.from_connection_string(conn_str)
     return _client
 
 async def send_whatsapp_text(channel_id: str, to_phone: str, text: str):

@@ -18,7 +18,7 @@ def _app_log(event: str, **fields):
     }
     print("APP_TRACE=" + json.dumps(payload, ensure_ascii=False, default=str))
 
-print("VOICE_BUILD=2026-03-18-02")
+print("VOICE_BUILD=2026-03-18-04")
 for r in app.routes:
     print("ROUTE", getattr(r, "path", None), getattr(r, "methods", None))
 
@@ -46,21 +46,21 @@ async def request_trace(request: Request, call_next):
 
 @app.get("/debug/ping")
 async def debug_ping():
-    return {"ok": True, "build": "2026-03-16-01"}
+    return {"ok": True, "build": "2026-03-18-04"}
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
 
 @app.get("/debug/voice-auth")
 async def debug_voice_auth():
     endpoint = os.environ["ACS_ENDPOINT"].strip()
-    key = (os.getenv("ACS_ACCESS_KEY") or os.getenv("COMMUNICATION_SERVICES_ACCESS_KEY") or "").strip()
+    key = (os.getenv("ACS_ACCESS_KEY") or "").strip()
     return {
         "endpoint": endpoint,
         "key_len": len(key),
         "key_fp": hashlib.sha256(key.encode("utf-8")).hexdigest()[:12],
     }
-
-@app.get("/health")
-async def health():
-    return {"ok": True}
 
 @app.post("/core/message")
 async def core_message(msg: InternalMessage):

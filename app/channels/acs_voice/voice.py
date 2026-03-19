@@ -41,7 +41,7 @@ def get_call_client() -> CallAutomationClient:
     global _client
     if _client is None:
         endpoint = _get_env("ACS_ENDPOINT")
-        access_key = _get_env("ACS_ACCESS_KEY", "COMMUNICATION_SERVICES_ACCESS_KEY")
+        access_key = _get_env("ACS_ACCESS_KEY")
 
         _voice_log(
             "client_config",
@@ -339,10 +339,11 @@ async def _handle_user_speech(call_conn, call_connection_id: str, text: str, ind
     )
 
     try:
+        caller_phone = _call_callers.get(call_connection_id, "unknown")
         msg = InternalMessage(
             channel="voice",
-            userId=call_connection_id,
-            conversationId=call_connection_id,
+            userId=caller_phone,
+            conversationId=f"voice-{caller_phone}",
             correlationId=call_connection_id,
             text=text,
         )
