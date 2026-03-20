@@ -213,7 +213,7 @@ Write-Ok "ACS -> Cognitive Services RBAC assigned."
 Write-Step "Creating Cosmos DB '$cosmosName' (serverless) in $Location..."
 az cosmosdb create --name $cosmosName --resource-group $ResourceGroup `
     --locations regionName=$Location --capabilities EnableServerless `
-    --kind GlobalDocumentDB --output none
+    --kind GlobalDocumentDB --public-network-access ENABLED --output none
 Assert-Az "Create Cosmos DB"
 Write-Ok "Cosmos DB account ready."
 
